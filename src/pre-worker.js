@@ -14,7 +14,7 @@ Module.preRun.push(function () {
 
   let result
   {
-    const regex = /^fontname((v2:[ \t]*(?<fontName2>[^_]+)_(?<fontProperties2>[^,]*)\.(?<fontExtension2>[a-z0-9]{3,5}),[ \t]*(?<fontContent2>.+)$)|(:[ \t]*(?<fontName>[^_]+)_(?<fontProperties>[^$]*)\.(?<fontExtension>[a-z0-9]{3,5})(?<fontContent>(?:\r?\n[\x21-\x60]+)+)))/mg
+    const regex = new RegExp('^fontname((v2:[ \t]*(?<fontName2>[^_]+)_(?<fontProperties2>[^,]*)\.(?<fontExtension2>[a-z0-9]{3,5}),[ \t]*(?<fontContent2>.+)$)|(:[ \t]*(?<fontName>[^_]+)_(?<fontProperties>[^$]*)\.(?<fontExtension>[a-z0-9]{3,5})(?<fontContent>(?:\r?\n[\x21-\x60]+)+)))', 'mg')
     while ((result = regex.exec(self.subContent)) !== null) {
       let font
       if ('fontName2' in result.groups && result.groups.fontName2 !== undefined) {
