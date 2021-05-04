@@ -83,12 +83,12 @@ self.writeFontToFS = function (font) {
     font = font.substr(1)
   }
 
-  if (self.fontMap_.hasOwnProperty(font)) return
+  if (self.fontMap_.font) return
 
   self.fontMap_[font] = true
 
   let path
-  if (self.availableFonts.hasOwnProperty(font)) {
+  if (self.availableFonts.font) {
     path = self.availableFonts[font]
   } else {
     return
@@ -122,12 +122,15 @@ self.writeAvailableFontsToFS = function (content) {
 }
 
 self.getRenderMethod = function () {
-  if (self.renderMode === 'fast') {
-    return self.fastRender
-  } else if (self.renderMode === 'blend') {
-    return self.blendRender
-  } else {
-    return self.render
+  switch (self.renderMode) {
+    case 'fast':
+      return self.fastRender
+    case 'blend':
+      return self.blendRender
+    case 'offscreenCanvas':
+      return self.offscreenRender
+    default:
+      return self.render
   }
 }
 
@@ -213,7 +216,7 @@ self.getIsPaused = function () {
   return self._isPaused
 }
 self.setIsPaused = function (isPaused) {
-  if (isPaused != self._isPaused) {
+  if (isPaused !== self._isPaused) {
     self._isPaused = isPaused
     if (isPaused) {
       if (self.rafId) {
@@ -368,6 +371,96 @@ self.fastRender = function (force) {
   }
 }
 
+self.offscreenRender = function (force) {
+  self.rafId = 0
+  self.renderPending = false
+  // const startTime = performance.now()
+  const result = self.octObj.renderImage(
+    self.getCurrentTime() + self.delay,
+    self.changed
+  )
+  const changed = Module.getValue(self.changed, 'i32')
+  if ((Number(changed) !== 0 || force) && self.offscreenCanvas) {
+    const images = self.buildResultImage(result)
+    // const newTime = performance.now()
+    // const libassTime = newTime - startTime
+    const promises = []
+    for (const item of images) {
+      promises.push(createImageBitmap(item.image))
+    }
+    Promise.all(promises).then(function (bitmaps) {
+      // const decodeTime = performance.now() - newTime
+      function renderFastFrames () {
+        // const beforeDrawTime = performance.now()
+        self.offscreenCanvasCtx.clearRect(0, 0, self.offscreenCanvas.width, self.offscreenCanvas.height)
+        for (let i = 0; i < bitmaps.length; i++) {
+          self.offscreenCanvasCtx.drawImage(
+            bitmaps[i],
+            images[i].x,
+            images[i].y
+          )
+        }
+        // const drawTime = performance.now() - beforeDrawTime
+        // console.log(bitmaps.length + ' bitmaps, libass: ' + libassTime + 'ms, decode: ' + decodeTime + 'ms, draw: ' + drawTime + 'ms' )
+      }
+      self.requestAnimationFrame(renderFastFrames)
+    })
+  }
+  if (!self._isPaused) {
+    self.rafId = self.requestAnimationFrame(self.offscreenRender)
+  }
+}
+
+self.buildResultImage = function (ptr) {
+  const items = []
+  let item
+  while (Number(ptr.ptr) !== 0) {
+    item = self.buildResultImageItem(ptr)
+    if (item !== null) {
+      items.push(item)
+    }
+    ptr = ptr.next
+  }
+  return items
+}
+self.buildResultImageItem = function (ptr) {
+  const bitmap = ptr.bitmap
+  const stride = ptr.stride
+  const w = ptr.w
+  const h = ptr.h
+  const color = ptr.color
+  if (w === 0 || h === 0) {
+    return null
+  }
+  const a = (255 - (color & 255)) / 255
+  if (a === 0) {
+    return null
+  }
+  const c = ((color << 8) & 0xff0000) | ((color >> 8) & 0xff00) | ((color >> 24) & 0xff) // black magic
+  const buf = new ArrayBuffer(w * h * 4)
+  const buf8 = new Uint8ClampedArray(buf)
+  const data = new Uint32Array(buf) // operate on a single position, instead of 4 positions at once
+  let bitmapPosition = 0
+  let resultPosition = 0
+  for (let y = h; y--; bitmapPosition += stride) {
+    const offset = bitmap + bitmapPosition
+    for (let x = 0, z = w; z--; ++x, resultPosition++) {
+      const k = Module.HEAPU8[offset + x]
+      if (k !== 0) {
+        data[resultPosition] = ((a * k) << 24) | c // more black magic
+      }
+    }
+  }
+  const image = new ImageData(buf8, w, h)
+  x = ptr.dst_x
+  y = ptr.dst_y
+  return {
+    x: x,
+    y: y,
+    image: image
+  }
+}
+
 self.buildResult = function (ptr) {
   const items = []
   const transferable = []
@@ -391,37 +484,33 @@ self.buildResultItem = function (ptr) {
   const w = ptr.w
   const h = ptr.h
   const color = ptr.color
-
-  if (w == 0 || h == 0) {
+  if (w === 0 || h === 0) {
     return null
   }
-
-  const r = (color >> 24) & 0xFF
-  const g = (color >> 16) & 0xFF
-  const b = (color >> 8) & 0xFF
-  const a = 255 - (color & 0xFF)
-
-  const result = new Uint8ClampedArray(4 * w * h)
-
+  const a = (255 - (color & 255)) / 255
+  if (a === 0) {
+    return null
+  }
+  const c = ((color << 8) & 0xff0000) | ((color >> 8) & 0xff00) | ((color >> 24) & 0xff) // black magic
+  const buf = new ArrayBuffer(w * h * 4)
+  const buf8 = new Uint8ClampedArray(buf)
+  const data = new Uint32Array(buf) // operate on a single position, instead of 4 positions at once
   let bitmapPosition = 0
   let resultPosition = 0
-
-  for (var y = 0; y < h; ++y) {
-    for (var x = 0; x < w; ++x) {
-      const k = Module.HEAPU8[bitmap + bitmapPosition + x] * a / 255
-      result[resultPosition] = r
-      result[resultPosition + 1] = g
-      result[resultPosition + 2] = b
-      result[resultPosition + 3] = k
-      resultPosition += 4
+  for (let y = h; y--; bitmapPosition += stride) {
+    const offset = bitmap + bitmapPosition
+    for (let x = 0, z = w; z--; ++x, resultPosition++) {
+      const k = Module.HEAPU8[offset + x]
+      if (k !== 0) {
+        data[resultPosition] = ((a * k) << 24) | c // more black magic
+      }
     }
-    bitmapPosition += stride
   }
 
   x = ptr.dst_x
   y = ptr.dst_y
 
-  return { w: w, h: h, x: x, y: y, buffer: result.buffer }
+  return { w: w, h: h, x: x, y: y, buffer: buf8.buffer }
 }
 
 if (typeof SDL !== 'undefined') {
@@ -616,7 +705,12 @@ function onMessageFromMainEmscriptenThread (message) {
         if (!self.renderOnDemand) {
           self.getRenderMethod()()
         }
-      } else throw 'ey?'
+      } else throw new Error('ey?')
+      break
+    }
+    case 'offscreenCanvas': {
+      self.offscreenCanvas = message.data.canvas
+      self.offscreenCanvasCtx = self.offscreenCanvas.getContext('2d')
       break
     }
     case 'video': {
@@ -643,9 +737,6 @@ function onMessageFromMainEmscriptenThread (message) {
       self.subContent = message.data.subContent
       self.fontFiles = message.data.fonts
       self.renderMode = message.data.renderMode
-      if (self.renderMode === 'fast' && typeof createImageBitmap === 'undefined') {
-        self.renderMode = 'normal'
-      }
       self.availableFonts = message.data.availableFonts
       self.fallbackFont = message.data.fallbackFont
       self.debug = message.data.debug
@@ -668,9 +759,11 @@ function onMessageFromMainEmscriptenThread (message) {
       break
     }
     case 'oneshot-render':
-      self.oneshotRender(message.data.lastRendered,
+      self.oneshotRender(
+        message.data.lastRendered,
         message.data.renderNow || false,
-        message.data.iteration)
+        message.data.iteration
+      )
       break
     case 'destroy':
       self.octObj.quitLibrary()
@@ -684,28 +777,32 @@ function onMessageFromMainEmscriptenThread (message) {
     case 'set-track-by-url':
       self.setTrackByUrl(message.data.url)
       break
-    case 'create-event':
-      var event = message.data.event
-      var i = self.octObj.allocEvent()
-      var evnt_ptr = self.octObj.track.get_events(i)
-      _applyKeys(event, evnt_ptr)
+    case 'create-event': {
+      const event = message.data.event
+      const vargs = Object.keys(event)
+      const evntPtr = self.octObj.track.get_events(self.octObj.allocEvent())
+
+      for (const varg of vargs) {
+        evntPtr[varg] = event[varg]
+      }
       break
-    case 'get-events':
-      var events = []
-      for (var i = 0; i < self.octObj.getEventCount(); i++) {
-        var evnt_ptr = self.octObj.track.get_events(i)
-        var event = {
-          Start: evnt_ptr.get_Start(),
-          Duration: evnt_ptr.get_Duration(),
-          ReadOrder: evnt_ptr.get_ReadOrder(),
-          Layer: evnt_ptr.get_Layer(),
-          Style: evnt_ptr.get_Style(),
-          Name: evnt_ptr.get_Name(),
-          MarginL: evnt_ptr.get_MarginL(),
-          MarginR: evnt_ptr.get_MarginR(),
-          MarginV: evnt_ptr.get_MarginV(),
-          Effect: evnt_ptr.get_Effect(),
-          Text: evnt_ptr.get_Text()
+    }
+    case 'get-events': {
+      const events = []
+      for (let i = 0; i < self.octObj.getEventCount(); i++) {
+        const evntPtr = self.octObj.track.get_events(i)
+        const event = {
+          Start: evntPtr.get_Start(),
+          Duration: evntPtr.get_Duration(),
+          ReadOrder: evntPtr.get_ReadOrder(),
+          Layer: evntPtr.get_Layer(),
+          Style: evntPtr.get_Style(),
+          Name: evntPtr.get_Name(),
+          MarginL: evntPtr.get_MarginL(),
+          MarginR: evntPtr.get_MarginR(),
+          MarginV: evntPtr.get_MarginV(),
+          Effect: evntPtr.get_Effect(),
+          Text: evntPtr.get_Text()
         }
 
         events.push(event)
@@ -716,53 +813,53 @@ function onMessageFromMainEmscriptenThread (message) {
         events: events
       })
       break
-    case 'set-event':
-      var event = message.data.event
-      var i = message.data.index
-      var evnt_ptr = self.octObj.track.get_events(i)
-      _applyKeys(event, evnt_ptr)
+    }
+    case 'set-event': {
+      const event = message.data.event
+      const evntPtr = self.octObj.track.get_events(message.data.index)
+      _applyKeys(event, evntPtr)
       break
+    }
     case 'remove-event':
-      var i = message.data.index
-      self.octObj.removeEvent(i)
+      self.octObj.removeEvent(message.data.index)
       break
-    case 'create-style':
-      var style = message.data.style
-      var i = self.octObj.allocStyle()
-      var styl_ptr = self.octObj.track.get_styles(i)
-      _applyKeys(style, styl_ptr)
+    case 'create-style': {
+      const style = message.data.style
+      const stylPtr = self.octObj.track.get_styles(iself.octObj.allocStyle())
+      _applyKeys(style, stylPtr)
       break
-    case 'get-styles':
-      var styles = []
-      for (var i = 0; i < self.octObj.getStyleCount(); i++) {
-        var styl_ptr = self.octObj.track.get_styles(i)
-        var style = {
-          Name: styl_ptr.get_Name(),
-          FontName: styl_ptr.get_FontName(),
-          FontSize: styl_ptr.get_FontSize(),
-          PrimaryColour: styl_ptr.get_PrimaryColour(),
-          SecondaryColour: styl_ptr.get_SecondaryColour(),
-          OutlineColour: styl_ptr.get_OutlineColour(),
-          BackColour: styl_ptr.get_BackColour(),
-          Bold: styl_ptr.get_Bold(),
-          Italic: styl_ptr.get_Italic(),
-          Underline: styl_ptr.get_Underline(),
-          StrikeOut: styl_ptr.get_StrikeOut(),
-          ScaleX: styl_ptr.get_ScaleX(),
-          ScaleY: styl_ptr.get_ScaleY(),
-          Spacing: styl_ptr.get_Spacing(),
-          Angle: styl_ptr.get_Angle(),
-          BorderStyle: styl_ptr.get_BorderStyle(),
-          Outline: styl_ptr.get_Outline(),
-          Shadow: styl_ptr.get_Shadow(),
-          Alignment: styl_ptr.get_Alignment(),
-          MarginL: styl_ptr.get_MarginL(),
-          MarginR: styl_ptr.get_MarginR(),
-          MarginV: styl_ptr.get_MarginV(),
-          Encoding: styl_ptr.get_Encoding(),
-          treat_fontname_as_pattern: styl_ptr.get_treat_fontname_as_pattern(),
-          Blur: styl_ptr.get_Blur(),
-          Justify: styl_ptr.get_Justify()
+    }
+    case 'get-styles': {
+      const styles = []
+      for (let i = 0; i < self.octObj.getStyleCount(); i++) {
+        const stylPtr = self.octObj.track.get_styles(i)
+        const style = {
+          Name: stylPtr.get_Name(),
+          FontName: stylPtr.get_FontName(),
+          FontSize: stylPtr.get_FontSize(),
+          PrimaryColour: stylPtr.get_PrimaryColour(),
+          SecondaryColour: stylPtr.get_SecondaryColour(),
+          OutlineColour: stylPtr.get_OutlineColour(),
+          BackColour: stylPtr.get_BackColour(),
+          Bold: stylPtr.get_Bold(),
+          Italic: stylPtr.get_Italic(),
+          Underline: stylPtr.get_Underline(),
+          StrikeOut: stylPtr.get_StrikeOut(),
+          ScaleX: stylPtr.get_ScaleX(),
+          ScaleY: stylPtr.get_ScaleY(),
+          Spacing: stylPtr.get_Spacing(),
+          Angle: stylPtr.get_Angle(),
+          BorderStyle: stylPtr.get_BorderStyle(),
+          Outline: stylPtr.get_Outline(),
+          Shadow: stylPtr.get_Shadow(),
+          Alignment: stylPtr.get_Alignment(),
+          MarginL: stylPtr.get_MarginL(),
+          MarginR: stylPtr.get_MarginR(),
+          MarginV: stylPtr.get_MarginV(),
+          Encoding: stylPtr.get_Encoding(),
+          treat_fontname_as_pattern: stylPtr.get_treat_fontname_as_pattern(),
+          Blur: stylPtr.get_Blur(),
+          Justify: stylPtr.get_Justify()
         }
         styles.push(style)
       }
@@ -772,15 +869,15 @@ function onMessageFromMainEmscriptenThread (message) {
         styles: styles
       })
       break
-    case 'set-style':
-      var style = message.data.style
-      var i = message.data.index
-      var styl_ptr = self.octObj.track.get_styles(i)
-      _applyKeys(style, styl_ptr)
+    }
+    case 'set-style': {
+      const style = message.data.style
+      const stylPtr = self.octObj.track.get_styles(message.data.index)
+      _applyKeys(style, stylPtr)
       break
+    }
     case 'remove-style':
-      var i = message.data.index
-      self.octObj.removeStyle(i)
+      self.octObj.removeStyle(message.data.index)
       break
     case 'runBenchmark': {
       self.runBenchmark()
@@ -790,7 +887,7 @@ function onMessageFromMainEmscriptenThread (message) {
       if (Module.onCustomMessage) {
         Module.onCustomMessage(message)
       } else {
-        throw 'Custom message received but worker Module.onCustomMessage not implemented.'
+        console.error('Custom message received but worker Module.onCustomMessage not implemented.')
       }
       break
     }
@@ -799,9 +896,9 @@ function onMessageFromMainEmscriptenThread (message) {
       break
     }
     default:
-      throw 'wha? ' + message.data.target
+      throw new Error('wha? ' + message.data.target)
   }
-};
+}
 
 onmessage = onMessageFromMainEmscriptenThread
 
@@ -817,7 +914,7 @@ self.runBenchmark = function (seconds, pos, async) {
   const count = seconds * self.targetFps
   const start = performance.now()
   let longestFrame = 0
-  var run = function () {
+  const run = function () {
     const t0 = performance.now()
 
     pos += 1 / self.targetFps
@@ -826,13 +923,10 @@ self.runBenchmark = function (seconds, pos, async) {
     const t1 = performance.now()
     const diff = t1 - t0
     totalTime += diff
-    if (diff > longestFrame) {
-      longestFrame = diff
-    }
+    if (diff > longestFrame) longestFrame = diff
 
     if (i < count) {
       i++
-
       if (async) {
         self.requestAnimationFrame(run)
         return false
@@ -844,7 +938,6 @@ self.runBenchmark = function (seconds, pos, async) {
       console.log('Real fps: ' + Math.round(1000 / ((t1 - start) / count)) + '')
       console.log('Total time: ' + totalTime)
       console.log('Longest frame: ' + Math.ceil(longestFrame) + 'ms (' + Math.floor(1000 / longestFrame) + ' fps)')
-
       return false
     }
   }
