@@ -336,12 +336,12 @@ class SubtitlesOctopus {
 
     function _renderSubtitleEvent (event, currentTime) {
       const eventOver = event.eventFinish < currentTime
-      if (self.oneshotState.eventStart == event.eventStart && self.oneshotState.eventOver == eventOver) { return }
+      if (self.oneshotState.eventStart === event.eventStart && self.oneshotState.eventOver === eventOver) { return }
       self.oneshotState.eventStart = event.eventStart
       self.oneshotState.eventOver = eventOver
 
       const beforeDrawTime = performance.now()
-      if (event.viewport.width != self.canvas.width || event.viewport.height != self.canvas.height) {
+      if (event.viewport.width !== self.canvas.width || event.viewport.height !== self.canvas.height) {
         self.canvas.width = event.viewport.width
         self.canvas.height = event.viewport.height
       }
@@ -398,7 +398,7 @@ class SubtitlesOctopus {
       if (self.renderAhead > 0) {
         const newCache = []
         if (isResizing && self.oneshotState.prevHeight && self.oneshotState.prevWidth) {
-          if (self.oneshotState.prevHeight == self.canvas.height && self.oneshotState.prevWidth == self.canvas.width) return
+          if (self.oneshotState.prevHeight === self.canvas.height && self.oneshotState.prevWidth === self.canvas.width) return
           let timeLimit = 10; let sizeLimit = self.renderAhead * 0.3
           if (self.canvas.height >= self.oneshotState.prevHeight * (1.0 - self.resizeVariation) &&
                         self.canvas.height <= self.oneshotState.prevHeight * (1.0 + self.resizeVariation) &&
@@ -557,7 +557,7 @@ class SubtitlesOctopus {
               break
             }
             case 'oneshot-result': {
-              if (data.iteration != self.oneshotState.iteration) {
+              if (data.iteration !== self.oneshotState.iteration) {
                 console.debug('received stale prerender, ignoring')
                 return
               }
