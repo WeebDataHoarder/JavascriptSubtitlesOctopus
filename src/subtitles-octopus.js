@@ -3,7 +3,10 @@ class SubtitlesOctopus {
     const self = this
     self.canvas = options.canvas // HTML canvas element (optional if video specified)
     self.renderMode = options.renderMode || (options.lossyRender ? 'fast' : (options.blendRender ? 'blend' : 'normal'))
-    if (self.renderMode == 'fast' && typeof createImageBitmap === 'undefined') {
+    if (self.renderMode === 'offscreenCanvas' && typeof OffscreenCanvas === 'undefined') {
+      self.renderMode = 'fast'
+    }
+    if ((self.renderMode === 'fast' || self.renderMode === 'offscreenCanvas') && typeof createImageBitmap === 'undefined') {
       self.renderMode = 'normal'
     }
 
@@ -11,7 +14,7 @@ class SubtitlesOctopus {
     self.dropAllAnimations = options.dropAllAnimations || false
     self.libassMemoryLimit = options.libassMemoryLimit || 0 // set libass bitmap cache memory limit in MiB (approximate)
     self.libassGlyphLimit = options.libassGlyphLimit || 0 // set libass glyph cache memory limit in MiB (approximate)
-    self.targetFps = options.targetFps || 30
+    self.targetFps = options.targetFps || 23.976
     self.prescaleTradeoff = options.prescaleTradeoff || null // render subtitles less than viewport when less than 1.0 to improve speed, render to more than 1.0 to improve quality; set to null to disable scaling
     self.softHeightLimit = options.softHeightLimit || 1080 // don't apply prescaleTradeoff < 1 when viewport height is less that this limit
     self.hardHeightLimit = options.hardHeightLimit || 2160 // don't ever go above this limit
@@ -47,14 +50,14 @@ class SubtitlesOctopus {
       prevHeight: null
     }
 
-    self.hasAlphaBug = false;
+    self.hasAlphaBug = undefined;
 
     (function () {
       if (typeof ImageData.prototype.constructor === 'function') {
         try {
           // try actually calling ImageData, as on some browsers it's reported
           // as existing but calling it errors out as "TypeError: Illegal constructor"
-          new window.ImageData(new Uint8ClampedArray([0, 0, 0, 0]), 1, 1)
+          const image = new ImageData(new Uint8ClampedArray([0, 0, 0, 0]), 1, 1)
           return
         } catch (e) {
           console.log('detected that ImageData is not constructable despite browser saying so')
@@ -66,9 +69,8 @@ class SubtitlesOctopus {
 
       window.ImageData = function () {
         let i = 0
-        if (arguments[0] instanceof Uint8ClampedArray) {
-          var data = arguments[i++]
-        }
+        let data
+        if (arguments[0] instanceof Uint8ClampedArray) data = arguments[i++]
         const width = arguments[i++]
         const height = arguments[i]
 
@@ -125,50 +127,59 @@ class SubtitlesOctopus {
         renderOnDemand: self.renderAhead > 0,
         dropAllAnimations: self.dropAllAnimations
       })
+      if (self.renderMode === 'offscreenCanvas') self.pushOffscreenCanvas()
+      self.initDone = true
+    }
+    self.pushOffscreenCanvas = function () {
+      const canvasControl = self.canvas.transferControlToOffscreen()
+      self.worker.postMessage({
+        target: 'offscreenCanvas',
+        canvas: canvasControl
+      }, [canvasControl])
     }
 
     self.createCanvas = function () {
-      if (!self.canvas) {
-        if (self.video) {
-          self.isOurCanvas = true
-          self.canvas = document.createElement('canvas')
-          self.canvas.className = 'libassjs-canvas'
-          self.canvas.style.display = 'none'
+      if (self.video) {
+        self.isOurCanvas = true
+        self.canvas = document.createElement('canvas')
+        self.canvas.className = 'libassjs-canvas'
+        self.canvas.style.display = 'none'
 
-          self.canvasParent = document.createElement('div')
-          self.canvasParent.className = 'libassjs-canvas-parent'
-          self.canvasParent.appendChild(self.canvas)
+        self.canvasParent = document.createElement('div')
+        self.canvasParent.className = 'libassjs-canvas-parent'
+        self.canvasParent.appendChild(self.canvas)
 
-          if (self.video.nextSibling) {
-            self.video.parentNode.insertBefore(self.canvasParent, self.video.nextSibling)
-          } else {
-            self.video.parentNode.appendChild(self.canvasParent)
-          }
+        if (self.video.nextSibling) {
+          self.video.parentNode.insertBefore(self.canvasParent, self.video.nextSibling)
         } else {
-          if (!self.canvas) {
-            self.workerError('Don\'t know where to render: you should give video or canvas in options.')
-          }
+          self.video.parentNode.appendChild(self.canvasParent)
+        }
+      } else {
+        if (!self.canvas) {
+          self.workerError('Don\'t know where to render: you should give video or canvas in options.')
         }
       }
-      self.ctx = self.canvas.getContext('2d')
-      self.bufferCanvas = document.createElement('canvas')
-      self.bufferCanvasCtx = self.bufferCanvas.getContext('2d')
+      if (self.hasAlphaBug === undefined && self.renderMode !== 'offscreenCanvas') {
+        self.ctx = self.canvas.getContext('2d')
+        self.bufferCanvas = document.createElement('canvas')
+        self.bufferCanvasCtx = self.bufferCanvas.getContext('2d')
 
-      // test for alpha bug, where e.g. WebKit can render a transparent pixel
-      // (with alpha == 0) as non-black which then leads to visual artifacts
-      self.bufferCanvas.width = 1
-      self.bufferCanvas.height = 1
-      const testBuf = new Uint8ClampedArray([0, 255, 0, 0])
-      const testImage = new ImageData(testBuf, 1, 1)
-      self.bufferCanvasCtx.clearRect(0, 0, 1, 1)
-      self.ctx.clearRect(0, 0, 1, 1)
-      const prePut = self.ctx.getImageData(0, 0, 1, 1).data
-      self.bufferCanvasCtx.putImageData(testImage, 0, 0)
-      self.ctx.drawImage(self.bufferCanvas, 0, 0)
-      const postPut = self.ctx.getImageData(0, 0, 1, 1).data
-      self.hasAlphaBug = prePut[1] !== postPut[1]
-      if (self.hasAlphaBug) {
-        console.log('Detected a browser having issue with transparent pixels, applying workaround')
+        // test for alpha bug, where e.g. WebKit can render a transparent pixel
+        // (with alpha == 0) as non-black which then leads to visual artifacts
+        self.bufferCanvas.width = 1
+        self.bufferCanvas.height = 1
+        const testBuf = new Uint8ClampedArray([0, 255, 0, 0])
+        const testImage = new ImageData(testBuf, 1, 1)
+        self.bufferCanvasCtx.clearRect(0, 0, 1, 1)
+        self.ctx.clearRect(0, 0, 1, 1)
+        const prePut = self.ctx.getImageData(0, 0, 1, 1).data
+        self.bufferCanvasCtx.putImageData(testImage, 0, 0)
+        self.ctx.drawImage(self.bufferCanvas, 0, 0)
+        const postPut = self.ctx.getImageData(0, 0, 1, 1).data
+        self.hasAlphaBug = prePut[1] !== postPut[1]
+        if (self.hasAlphaBug) {
+          console.log('Detected a browser having issue with transparent pixels, applying workaround')
+        }
       }
     }
 
@@ -205,15 +216,9 @@ class SubtitlesOctopus {
           self.setIsPaused(true, video.currentTime + self.timeOffset)
         }, false)
 
-        document.addEventListener('fullscreenchange', self.resizeWithTimeout, false)
-        document.addEventListener('mozfullscreenchange', self.resizeWithTimeout, false)
-        document.addEventListener('webkitfullscreenchange', self.resizeWithTimeout, false)
-        document.addEventListener('msfullscreenchange', self.resizeWithTimeout, false)
-        window.addEventListener('resize', self.resizeWithTimeout, false)
-
         // Support Element Resize Observer
         if (typeof ResizeObserver !== 'undefined') {
-          self.ro = new ResizeObserver(self.resizeWithTimeout)
+          self.ro = new ResizeObserver(() => self.resize())
           self.ro.observe(self.video)
         }
 
@@ -221,7 +226,6 @@ class SubtitlesOctopus {
           self.resize()
         } else {
           self.video.addEventListener('loadedmetadata', function (e) {
-            e.target.removeEventListener(e.type, arguments.callee)
             self.resize()
           }, false)
         }
@@ -252,8 +256,7 @@ class SubtitlesOctopus {
 
     function _cleanPastRendered (currentTime, seekClean) {
       let retainedItems = []
-      for (var i = 0, len = self.renderedItems.length; i < len; i++) {
-        var item = self.renderedItems[i]
+      for (const item of self.renderedItems) {
         if (item.emptyFinish < 0 || item.emptyFinish >= currentTime) {
           // item is not yet finished, retain it
           retainedItems.push(item)
@@ -271,8 +274,7 @@ class SubtitlesOctopus {
             console.info('seeked backwards, need to free up some buffer')
             let size = 0; const limit = self.renderAhead * 0.3 /* try to take no more than 1/3 of buffer */
             const retain = []
-            for (var i = 0, len = retainedItems.length; i < len; i++) {
-              var item = retainedItems[i]
+            for (const item of retainedItems) {
               size += item.size
               if (size >= limit) { break }
               retain.push(item)
@@ -345,8 +347,7 @@ class SubtitlesOctopus {
       }
       self.ctx.clearRect(0, 0, self.canvas.width, self.canvas.height)
       if (!eventOver) {
-        for (let i = 0; i < event.items.length; i++) {
-          const image = event.items[i]
+        for (const image of event.items) {
           self.bufferCanvas.width = image.w
           self.bufferCanvas.height = image.h
           self.bufferCanvasCtx.putImageData(image.image, 0, 0)
@@ -365,8 +366,7 @@ class SubtitlesOctopus {
 
       const currentTime = self.video.currentTime + self.timeOffset
       let finishTime = -1; let eventShown = false; let animated = false
-      for (let i = 0, len = self.renderedItems.length; i < len; i++) {
-        const item = self.renderedItems[i]
+      for (const item of self.renderedItems) {
         if (!eventShown && item.eventStart <= currentTime && (item.emptyFinish < 0 || item.emptyFinish > currentTime)) {
           _renderSubtitleEvent(item, currentTime)
           eventShown = true
@@ -398,8 +398,7 @@ class SubtitlesOctopus {
       if (self.renderAhead > 0) {
         const newCache = []
         if (isResizing && self.oneshotState.prevHeight && self.oneshotState.prevWidth) {
-          if (self.oneshotState.prevHeight == self.canvas.height &&
-                        self.oneshotState.prevWidth == self.canvas.width) { return }
+          if (self.oneshotState.prevHeight == self.canvas.height && self.oneshotState.prevWidth == self.canvas.width) return
           let timeLimit = 10; let sizeLimit = self.renderAhead * 0.3
           if (self.canvas.height >= self.oneshotState.prevHeight * (1.0 - self.resizeVariation) &&
                         self.canvas.height <= self.oneshotState.prevHeight * (1.0 + self.resizeVariation) &&
@@ -465,9 +464,9 @@ class SubtitlesOctopus {
     }
 
     /**
-           * Lossy Render Mode
-           *
-           */
+    * Lossy Render Mode
+    *
+    */
     function renderFastFrames () {
       const data = self.renderFramesData
       const beforeDrawTime = performance.now()
@@ -530,7 +529,7 @@ class SubtitlesOctopus {
         case 'canvas': {
           switch (data.op) {
             case 'getContext': {
-              self.ctx = self.canvas.getContext(data.type, data.attributes)
+              if (self.renderMode !== 'offscreenCanvas') self.ctx = self.canvas.getContext(data.type, data.attributes)
               break
             }
             case 'resize': {
@@ -638,7 +637,7 @@ class SubtitlesOctopus {
               break
             }
             default:
-              throw 'eh?'
+              throw data.target
           }
           break
         }
@@ -654,7 +653,7 @@ class SubtitlesOctopus {
           if (self.onCustomMessage) {
             self.onCustomMessage(event)
           } else {
-            throw 'Custom message received but client onCustomMessage not implemented.'
+            console.error('Custom message received but client onCustomMessage not implemented.')
           }
           break
         }
@@ -678,7 +677,7 @@ class SubtitlesOctopus {
           break
         }
         default:
-          throw 'what? ' + data.target
+          throw data.target
       }
     }
 
@@ -735,36 +734,65 @@ class SubtitlesOctopus {
         return
       }
 
-      if (self.canvas.width != width ||
-                self.canvas.height != height ||
-                self.canvas.style.top != top ||
-                self.canvas.style.left != left) {
-        self.canvas.width = width
-        self.canvas.height = height
-
+      if (self.canvas.style.top !== top || self.canvas.style.left !== left) {
         if (videoSize != null) {
           self.canvasParent.style.position = 'relative'
           self.canvas.style.display = 'block'
           self.canvas.style.position = 'absolute'
-          self.canvas.style.width = videoSize.width + 'px'
-          self.canvas.style.height = videoSize.height + 'px'
           self.canvas.style.top = top + 'px'
           self.canvas.style.left = left + 'px'
           self.canvas.style.pointerEvents = 'none'
         }
+        if (!(self.canvas.width === width && self.canvas.height === height)) {
+          // only re-paint if dimensions actually changed
+          if (self.renderMode === 'offscreenCanvas' && self.initDone) {
+            self.canvasParent.remove()
+            self.canvasParent = undefined
+            self.createCanvas()
+          }
+          function rePaint () {
+            if (self.renderMode === 'offscreenCanvas' && self.canvasParent && self.initDone) {
+              self.canvasParent.remove()
+              self.canvasParent = undefined
+              self.createCanvas()
+            }
+            self.canvas.width = width
+            self.canvas.height = height
 
-        self.worker.postMessage({
-          target: 'canvas',
-          width: self.canvas.width,
-          height: self.canvas.height
-        })
-        self.resetRenderAheadCache(true)
+            if (videoSize != null) {
+              self.canvasParent.style.position = 'relative'
+              self.canvas.style.display = 'block'
+              self.canvas.style.position = 'absolute'
+              self.canvas.style.top = top + 'px'
+              self.canvas.style.left = left + 'px'
+              self.canvas.style.pointerEvents = 'none'
+            }
+
+            if (self.renderMode === 'offscreenCanvas' && self.initDone) {
+              self.pushOffscreenCanvas()
+            }
+            self.worker.postMessage({
+              target: 'canvas',
+              width: self.canvas.width,
+              height: self.canvas.height
+            })
+            self.resetRenderAheadCache(true)
+          }
+          // dont spam re-paints like crazy when re-sizing with animations, but still update instantly without them
+          if (self.resizeTimeoutBuffer) {
+            clearTimeout(self.resizeTimeoutBuffer)
+            self.resizeTimeoutBuffer = setTimeout(() => {
+              self.resizeTimeoutBuffer = undefined
+              rePaint()
+            }, 50)
+          } else {
+            rePaint()
+            self.resizeTimeoutBuffer = setTimeout(() => {
+              self.resizeTimeoutBuffer = undefined
+            }, 50)
+          }
+        }
       }
-    }
-
-    self.resizeWithTimeout = function () {
-      self.resize()
-      setTimeout(self.resize, 100)
     }
 
     self.runBenchmark = function () {
