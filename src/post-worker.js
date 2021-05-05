@@ -95,7 +95,7 @@ self.writeFontToFS = function(font) {
         return;
     }
 
-    Module["FS_createLazyFile"]("/fonts", 'font' + (self.fontId++) + '-' + path.split('/').pop(), path, true, false);
+    Module[(self.lazyFontLoading && path.indexOf("blob:") !== 0) ? "FS_createLazyFile" : "FS_createPreloadedFile"]("/fonts", 'font' + (self.fontId++) + '-' + path.split('/').pop(), path, true, false);
 };
 
 /**
@@ -652,6 +652,7 @@ function onMessageFromMainEmscriptenThread(message) {
             }
             self.availableFonts = message.data.availableFonts;
             self.fallbackFont = message.data.fallbackFont;
+            self.lazyFontLoading = message.data.lazyFontLoading;
             self.debug = message.data.debug;
             if (!hasNativeConsole && self.debug) {
                 console = makeCustomConsole();

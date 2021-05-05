@@ -1,4 +1,4 @@
-SubtitlesOctopus displays subtitles in .ass format and easily integrates with HTML5 videos. It supports all SSA/ASS features and fully compatible with [libass](https://github.com/libass/libass).
+SubtitlesOctopus displays subtitles in .ass format and easily integrates with HTML5 videos. It supports all SSA/ASS features supported by [libass](https://github.com/libass/libass).
 
 ## Features
 
@@ -7,7 +7,7 @@ SubtitlesOctopus displays subtitles in .ass format and easily integrates with HT
 - Works fast (because uses WebAssembly with fallback to asm.js if it's not available)
 - Uses Web Workers thus video and interface doesn't lag even on "heavy" subtitles (working in background)
 - Doesn't use DOM manipulations and render subtitles on single canvas
-- Fully compatible with [libass](https://github.com/libass/libass)
+- Uses [libass](https://github.com/libass/libass) natively.
 - Easy to use - just connect it to video element
 
 ## Included Libraries
@@ -27,7 +27,7 @@ To start using SubtitlesOctopus you only need to instantiate a new instance of
 var options = {
     video: document.getElementById('video'), // HTML5 video element
     subUrl: '/test/test.ass', // Link to subtitles
-    fallbackFont: '/test/font-1.ttf', // Fallback font to be used in case none can be loaded / or has special characters
+    fallbackFont: '/test/font-1.ttf', // Fallback font to be used in case subtitles have special characters
     fonts: ['/test/font-1.ttf', '/test/font-2.ttf'], // Links to fonts (not required, default font already included in build)
     workerUrl: '/subtitles-octopus-worker.js', // Link to worker file "libassjs-worker.js"
 };
@@ -47,7 +47,7 @@ the time the subtitles should render at yourself:
 var options = {
     canvas: document.getElementById('canvas'), // canvas element
     subUrl: '/test/test.ass', // Link to subtitles
-    fallbackFont: '/test/font-1.ttf', // Fallback font to be used in case none can be loaded / or has special characters
+    fallbackFont: '/test/font-1.ttf', // Fallback font to be used in case subtitles have special characters
     fonts: ['/test/font-1.ttf', '/test/font-2.ttf'], // Links to fonts
     workerUrl: '/subtitles-octopus-worker.js' // Link to file "libassjs-worker.js"
 };
@@ -100,7 +100,8 @@ When creating an instance of SubtitleOctopus, you can set the following options:
 - `subContent`: The content of the subtitle file to play. (Require either
   `subContent` or `subUrl` to be specified)
 - `workerUrl`: The URL of the worker. (Default: `subtitles-octopus-worker.js`)
-- `fallbackFont`: The URL of a fallback font to be used in case none can be loaded / or has special characters
+- `fallbackFont`: URL to override fallback font, for example, with a CJK one. Default fallback font is Liberation Sans (Optional)
+- `lazyFontLoading`: Load fonts in a lazy way. Requires Access-Control-Expose-Headers for Accept-Ranges, Content-Length, and Content-Encoding. If Content-Encoding is compressed, file will be fully fetched instead of just a HEAD request.
 - `fonts`: An array of links to the fonts used in the subtitle. (Optional)
 - `availableFonts`: Object with all available fonts - Key is font name in lower
   case, value is link: `{"arial": "/font1.ttf"}` (Optional)
@@ -114,7 +115,7 @@ When creating an instance of SubtitleOctopus, you can set the following options:
   `false`)
 
 ### Fast Render Mode (Lossy) (EXPERIMENTAL)
-The Fast Render mode has been created by @no1d as a suggestion for fix browser freezing when rendering heavy subtitles (#46), it use [createImageBitmap](https://developer.mozilla.org/en-US/docs/Web/API/WindowOrWorkerGlobalScope/createImageBitmap) to render the bitmap in the Worker, using Promises instead of direct render on canvas in the Main Thread. When the browser start to hang, it will not lock main thread, instead will run Async, so if the function createImageBitmap fail, it will not stop the rendering process at all and may cause some bitmap loss or simply will not draw anything in canvas, mostly on low end devices.
+The Fast Render mode has been created by @no1d as a suggestion for fix browser freezing when rendering heavy subtitles (#46), it uses [createImageBitmap](https://developer.mozilla.org/en-US/docs/Web/API/WindowOrWorkerGlobalScope/createImageBitmap) to render the bitmap in the Worker, using Promises instead of direct render on canvas in the Main Thread. When the browser start to hang, it will not lock main thread, instead will run Async, so if the function createImageBitmap fail, it will not stop the rendering process at all and may cause some bitmap loss or simply will not draw anything in canvas, mostly on low end devices.
 
 **WARNING: Experimental, not stable and not working in Safari**
 

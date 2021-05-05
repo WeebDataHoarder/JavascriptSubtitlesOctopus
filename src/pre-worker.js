@@ -115,12 +115,13 @@ Module["preRun"].push(function () {
 
     self.subContent = null;
 
-    Module["FS_createLazyFile"]("/fonts", ".fallback-" + self.fallbackFont.split('/').pop(), self.fallbackFont, true, false);
+    if(self.fallbackFont) {
+        Module[(self.lazyFontLoading && self.fallbackFont.indexOf("blob:") !== 0) ? "FS_createLazyFile" : "FS_createPreloadedFile"]("/fonts", ".fallback-" + self.fallbackFont.split('/').pop(), self.fallbackFont, true, false);
+    }
 
-    //Module["FS"].mount(Module["FS"].filesystems.IDBFS, {}, '/fonts');
     const fontFiles = self.fontFiles || [];
     for (i = 0; i < fontFiles.length; i++) {
-        Module["FS_createLazyFile"]("/fonts", 'font' + i + '-' + fontFiles[i].split('/').pop(), fontFiles[i], true, false);
+        Module[(self.lazyFontLoading && fontFiles[i].indexOf("blob:") !== 0) ? "FS_createLazyFile" : "FS_createPreloadedFile"]("/fonts", 'font' + i + '-' + fontFiles[i].split('/').pop(), fontFiles[i], true, false);
     }
 });
 
@@ -132,7 +133,7 @@ Module['onRuntimeInitialized'] = function () {
     if(self.debug){
         self.octObj.setLogLevel(7);
     }
-    self.octObj.initLibrary(screen.width, screen.height, "/fonts/.fallback-" + self.fallbackFont.split('/').pop());
+    self.octObj.initLibrary(screen.width, screen.height, self.fallbackFont ? "/fonts/.fallback-" + self.fallbackFont.split('/').pop() : "/default.woff2");
     self.octObj.setDropAnimations(!!self.dropAllAnimations);
     self.octObj.createTrack("/sub.ass");
     self.ass_track = self.octObj.track;

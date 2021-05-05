@@ -2,7 +2,8 @@ var SubtitlesOctopus = function (options) {
     var self = this;
     self.canvas = options.canvas; // HTML canvas element (optional if video specified)
     self.renderMode = options.renderMode || (options.lossyRender ? 'fast' : (options.blendRender ? 'blend' : 'normal'));
-    if(self.renderMode == "fast" && typeof createImageBitmap === 'undefined'){
+    if(self.renderMode === "fast" && typeof createImageBitmap === 'undefined'){
+        //Fallback for browsers not supporting fast renderMode (Safari)
         self.renderMode = "normal";
     }
 
@@ -20,7 +21,8 @@ var SubtitlesOctopus = function (options) {
     self.isOurCanvas = false; // (internal) we created canvas and manage it
     self.video = options.video; // HTML video element (optional if canvas specified)
     self.canvasParent = null; // (internal) HTML canvas parent element
-    self.fallbackFont = options.fallbackFont;
+    self.fallbackFont = options.fallbackFont || null; // Override fallback font, for example, with a CJK one. Default fallback font is Liberation Sans
+    self.lazyFontLoading = options.lazyFontLoading || false; // Load fonts in a lazy way. Requires Access-Control-Expose-Headers for Accept-Ranges, Content-Length, and Content-Encoding. If Content-Encoding is compressed, file will be fully fetched instead of just a HEAD request.
     self.fonts = options.fonts || []; // Array with links to fonts used in sub (optional)
     self.availableFonts = options.availableFonts || []; // Object with all available fonts (optional). Key is font name in lower case, value is link: {"arial": "/font1.ttf"}
     self.onReadyEvent = options.onReady; // Function called when SubtitlesOctopus is ready (optional)
@@ -115,6 +117,7 @@ var SubtitlesOctopus = function (options) {
             subUrl: self.subUrl,
             subContent: self.subContent,
             fallbackFont: self.fallbackFont,
+            lazyFontLoading: self.lazyFontLoading,
             fonts: self.fonts,
             availableFonts: self.availableFonts,
             debug: self.debug,

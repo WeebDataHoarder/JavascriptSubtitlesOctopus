@@ -331,6 +331,7 @@ EMCC_COMMON_ARGS = \
 	-s MALLOC=emmalloc \
 	-s ALLOW_MEMORY_GROWTH=1 \
 	-s INITIAL_MEMORY=67108864 \
+	--embed-file assets/default.woff2 \
 	--embed-file assets/fonts.conf \
 	-s FORCE_FILESYSTEM=1 \
 	-s ENVIRONMENT=web,worker \
