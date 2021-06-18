@@ -3,12 +3,8 @@ class SubtitlesOctopus {
     const self = this
     self.canvas = options.canvas // HTML canvas element (optional if video specified)
     self.renderMode = options.renderMode || (options.lossyRender ? 'fast' : (options.blendRender ? 'blend' : 'normal'))
-    if (self.renderMode === 'offscreenCanvas' && typeof OffscreenCanvas === 'undefined') {
-      self.renderMode = 'fast'
-    }
-    if ((self.renderMode === 'fast' || self.renderMode === 'offscreenCanvas') && typeof createImageBitmap === 'undefined') {
-      self.renderMode = 'normal'
-    }
+    if (self.renderMode === 'offscreenCanvas' && typeof OffscreenCanvas === 'undefined') self.renderMode = 'fast'
+    if ((self.renderMode === 'fast' || self.renderMode === 'offscreenCanvas') && typeof createImageBitmap === 'undefined') self.renderMode = 'normal'
 
     // play with those when you need some speed, e.g. for slow devices
     self.dropAllAnimations = options.dropAllAnimations || false
@@ -24,7 +20,8 @@ class SubtitlesOctopus {
     self.isOurCanvas = false // (internal) we created canvas and manage it
     self.video = options.video // HTML video element (optional if canvas specified)
     self.canvasParent = null // (internal) HTML canvas parent element
-    self.fallbackFont = options.fallbackFont
+    self.fallbackFont = options.fallbackFont || null // Override fallback font, for example, with a CJK one. Default fallback font is Liberation Sans
+    self.lazyFontLoading = options.lazyFontLoading || false // Load fonts in a lazy way. Requires Access-Control-Expose-Headers for Accept-Ranges, Content-Length, and Content-Encoding. If Content-Encoding is compressed, file will be fully fetched instead of just a HEAD request.
     self.fonts = options.fonts || [] // Array with links to fonts used in sub (optional)
     self.availableFonts = options.availableFonts || [] // Object with all available fonts (optional). Key is font name in lower case, value is link: {"arial": "/font1.ttf"}
     self.onReadyEvent = options.onReady // Function called when SubtitlesOctopus is ready (optional)
@@ -50,9 +47,9 @@ class SubtitlesOctopus {
       prevHeight: null
     }
 
-    self.hasAlphaBug = undefined;
+    self.hasAlphaBug = undefined
 
-    (function () {
+    ;(function () {
       if (typeof ImageData.prototype.constructor === 'function') {
         try {
           // try actually calling ImageData, as on some browsers it's reported
@@ -118,6 +115,7 @@ class SubtitlesOctopus {
         subUrl: self.subUrl,
         subContent: self.subContent,
         fallbackFont: self.fallbackFont,
+        lazyFontLoading: self.lazyFontLoading,
         fonts: self.fonts,
         availableFonts: self.availableFonts,
         debug: self.debug,
@@ -932,10 +930,6 @@ class SubtitlesOctopus {
 
 if (typeof SubtitlesOctopusOnLoad === 'function') {
   SubtitlesOctopusOnLoad()
-}
-
-if (typeof exports !== 'undefined') {
-  exports = SubtitlesOctopus
 }
 
 if (typeof module !== 'undefined') {

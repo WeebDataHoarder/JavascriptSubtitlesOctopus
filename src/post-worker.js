@@ -6,7 +6,7 @@ self.rate = 1
 self.rafId = null
 self.nextIsRaf = false
 self.lastCurrentTimeReceivedAt = Date.now()
-self.targetFps = 30
+self.targetFps = 23.976
 self.libassMemoryLimit = 0 // in MiB
 self.renderOnDemand = false // determines if only rendering on demand
 self.dropAllAnimations = false // set to true to enable "lite mode" with all animations disabled for speed
@@ -23,9 +23,7 @@ self.fontId = 0
  * @returns {Uint8Array}
  */
 self.readDataUri = function (dataURI) {
-  if (typeof dataURI !== 'string') {
-    throw new Error('Invalid argument: dataURI must be a string')
-  }
+  if (typeof dataURI !== 'string') throw new Error('Invalid argument: dataURI must be a string')
   dataURI = dataURI.split(',')
   const byteString = atob(dataURI[1])
   const byteStringLength = byteString.length
@@ -47,7 +45,7 @@ self.decodeASSFontEncoding = function (input) {
   let charCode
   while (offset < input.length) {
     charCode = input.charCodeAt(offset++)
-    if (charCode >= 0x21 && charCode <= 0x60) {
+    if (charCode >= 0x21 && charCode <= 0x60) { // TODO: optimise
       grouping[arrayOffset++] = charCode - 33
       if (arrayOffset === 4) {
         output[writeOffset++] = (grouping[0] << 2) | (grouping[1] >> 4)
@@ -62,7 +60,7 @@ self.decodeASSFontEncoding = function (input) {
   if (arrayOffset > 0) {
     if (arrayOffset === 2) {
       output[writeOffset++] = ((grouping[0] << 6) | grouping[1]) >> 4
-    } else if (arrayOffset === 3) {
+    } else if (arrayOffset === 3) { // TODO: optimise
       const ix = ((grouping[0] << 12) | (grouping[1] << 6) | grouping[2]) >> 2
       output[writeOffset++] = ix >> 8
       output[writeOffset++] = ix & 0xff
@@ -79,22 +77,16 @@ self.decodeASSFontEncoding = function (input) {
 self.writeFontToFS = function (font) {
   font = font.trim().toLowerCase()
 
-  if (font.startsWith('@')) {
-    font = font.substr(1)
-  }
+  if (font.startsWith('@')) font = font.substr(1)
 
-  if (self.fontMap_.font) return
+  if (self.fontMap_[font]) return
 
   self.fontMap_[font] = true
 
-  let path
-  if (self.availableFonts.font) {
-    path = self.availableFonts[font]
-  } else {
-    return
+  if (self.availableFonts[font]) {
+    const path = self.availableFonts[font]
+    Module[(self.lazyFontLoading && path.indexOf('blob:') !== 0) ? 'FS_createLazyFile' : 'FS_createPreloadedFile']('/fonts', 'font' + (self.fontId++) + '-' + path.split('/').pop(), path, true, false)
   }
-
-  Module[(self.lazyFontLoading && path.indexOf('blob:') !== 0) ? 'FS_createLazyFile' : 'FS_createPreloadedFile']('/fonts', 'font' + (self.fontId++) + '-' + path.split('/').pop(), path, true, false)
 }
 
 /**
@@ -104,21 +96,15 @@ self.writeFontToFS = function (font) {
 self.writeAvailableFontsToFS = function (content) {
   if (!self.availableFonts) return
 
-  const sections = parseAss(content)
-
-  for (let i = 0; i < sections.length; i++) {
-    for (let j = 0; j < sections[i].body.length; j++) {
-      if (sections[i].body[j].key === 'Style') {
-        self.writeFontToFS(sections[i].body[j].value.Fontname)
-      }
+  for (const selection of parseAss(content)) {
+    for (const key of selection.body) {
+      if (key === 'Style') self.writeFontToFS(key.value.Fontname)
     }
   }
 
   const regex = /\\fn([^\\}]*?)[\\}]/g
   let matches
-  while (matches = regex.exec(self.subContent)) {
-    self.writeFontToFS(matches[1])
-  }
+  while ((matches = regex.exec(self.subContent)) !== null) self.writeFontToFS(matches[1])
 }
 
 self.getRenderMethod = function () {
@@ -148,9 +134,7 @@ self.setTrack = function (content) {
   // Tell libass to render the new track
   self.octObj.createTrack('/sub.ass')
   self.ass_track = self.octObj.track
-  if (!self.renderOnDemand) {
-    self.getRenderMethod()()
-  }
+  if (!self.renderOnDemand) self.getRenderMethod()()
 }
 
 /**
@@ -158,9 +142,7 @@ self.setTrack = function (content) {
  */
 self.freeTrack = function () {
   self.octObj.removeTrack()
-  if (!self.renderOnDemand) {
-    self.getRenderMethod()()
-  }
+  if (!self.renderOnDemand) self.getRenderMethod()()
 }
 
 /**
@@ -180,28 +162,21 @@ self.resize = function (width, height) {
 
 self.getCurrentTime = function () {
   const diff = (Date.now() - self.lastCurrentTimeReceivedAt) / 1000
-  if (self._isPaused) {
-    return self.lastCurrentTime
-  } else {
-    if (diff > 5) {
-      console.error('Didn\'t received currentTime > 5 seconds. Assuming video was paused.')
-      self.setIsPaused(true)
-    }
-    return self.lastCurrentTime + (diff * self.rate)
+  if (self._isPaused) return self.lastCurrentTime
+  if (diff > 5) {
+    console.error('Didn\'t received currentTime > 5 seconds. Assuming video was paused.')
+    self.setIsPaused(true)
   }
+  return self.lastCurrentTime + (diff * self.rate)
 }
 self.setCurrentTime = function (currentTime) {
   self.lastCurrentTime = currentTime
   self.lastCurrentTimeReceivedAt = Date.now()
   if (!self.rafId) {
     if (self.nextIsRaf) {
-      if (!self.renderOnDemand) {
-        self.rafId = self.requestAnimationFrame(self.getRenderMethod())
-      }
+      if (!self.renderOnDemand) self.rafId = self.requestAnimationFrame(self.getRenderMethod())
     } else {
-      if (!self.renderOnDemand) {
-        self.getRenderMethod()()
-      }
+      if (!self.renderOnDemand) self.getRenderMethod()()
 
       // Give onmessage chance to receive all queued messages
       setTimeout(function () {
@@ -225,9 +200,7 @@ self.setIsPaused = function (isPaused) {
       }
     } else {
       self.lastCurrentTimeReceivedAt = Date.now()
-      if (!self.renderOnDemand) {
-        self.rafId = self.requestAnimationFrame(self.getRenderMethod())
-      }
+      if (!self.renderOnDemand) self.rafId = self.requestAnimationFrame(self.getRenderMethod())
     }
   }
 }
@@ -250,9 +223,7 @@ self.render = function (force) {
     }, result[1])
   }
 
-  if (!self._isPaused) {
-    self.rafId = self.requestAnimationFrame(self.render)
-  }
+  if (!self._isPaused) self.rafId = self.requestAnimationFrame(self.render)
 }
 
 self.blendRenderTiming = function (timing, force) {
@@ -260,7 +231,8 @@ self.blendRenderTiming = function (timing, force) {
 
   const renderResult = self.octObj.renderBlend(timing, force)
   const blendTime = renderResult.blend_time
-  const canvases = []; const buffers = []
+  const canvases = []
+  const buffers = []
   if (renderResult.ptr !== 0 && (renderResult.changed !== 0 || force)) {
     // make a copy, as we should free the memory so subsequent calls can utilize it
     for (let part = renderResult.part; part.ptr !== 0; part = part.next) {
@@ -295,14 +267,14 @@ self.blendRender = function (force) {
     }, rendered.buffers)
   }
 
-  if (!self._isPaused) {
-    self.rafId = self.requestAnimationFrame(self.blendRender)
-  }
+  if (!self._isPaused) self.rafId = self.requestAnimationFrame(self.blendRender)
 }
 
 self.oneshotRender = function (lastRenderedTime, renderNow, iteration) {
   const eventStart = renderNow ? lastRenderedTime : self.octObj.findNextEventStart(lastRenderedTime)
-  let eventFinish = -1.0; let emptyFinish = -1.0; let animated = false
+  let eventFinish = -1.0
+  let emptyFinish = -1.0
+  let animated = false
   let rendered = {}
   if (eventStart >= 0) {
     eventTimes = self.octObj.findEventStopTimes(eventStart)
@@ -336,25 +308,25 @@ self.fastRender = function (force) {
   self.rafId = 0
   self.renderPending = false
   const startTime = performance.now()
-  const renderResult = self.octObj.renderImage(self.getCurrentTime() + self.delay, self.changed)
+  const result = self.octObj.renderImage(
+    self.getCurrentTime() + self.delay,
+    self.changed
+  )
   const changed = Module.getValue(self.changed, 'i32')
-  if (changed !== 0 || force) {
-    const result = self.buildResult(renderResult)
+  if ((Number(changed) !== 0 || force) && self.offscreenCanvas) {
+    const images = self.buildResultImage(result)
     const newTime = performance.now()
     const libassTime = newTime - startTime
     const promises = []
-    for (let i = 0; i < result[0].length; i++) {
-      const image = result[0][i]
-      const imageBuffer = new Uint8ClampedArray(image.buffer)
-      const imageData = new ImageData(imageBuffer, image.w, image.h)
-      promises[i] = createImageBitmap(imageData, 0, 0, image.w, image.h)
+    for (const item of images) {
+      promises.push(createImageBitmap(item.image))
     }
     Promise.all(promises).then(function (imgs) {
       const decodeTime = performance.now() - newTime
       const bitmaps = []
       for (let i = 0; i < imgs.length; i++) {
         const image = result[0][i]
-        bitmaps[i] = { x: image.x, y: image.y, bitmap: imgs[i] }
+        bitmaps.push({ x: image.x, y: image.y, bitmap: imgs[i] })
       }
       postMessage({
         target: 'canvas',
@@ -366,15 +338,13 @@ self.fastRender = function (force) {
       }, imgs)
     })
   }
-  if (!self._isPaused) {
-    self.rafId = self.requestAnimationFrame(self.fastRender)
-  }
+  if (!self._isPaused) self.rafId = self.requestAnimationFrame(self.fastRender)
 }
 
 self.offscreenRender = function (force) {
   self.rafId = 0
   self.renderPending = false
-  // const startTime = performance.now()
+  const startTime = performance.now()
   const result = self.octObj.renderImage(
     self.getCurrentTime() + self.delay,
     self.changed
@@ -382,16 +352,16 @@ self.offscreenRender = function (force) {
   const changed = Module.getValue(self.changed, 'i32')
   if ((Number(changed) !== 0 || force) && self.offscreenCanvas) {
     const images = self.buildResultImage(result)
-    // const newTime = performance.now()
-    // const libassTime = newTime - startTime
+    const newTime = performance.now()
+    const libassTime = newTime - startTime
     const promises = []
     for (const item of images) {
       promises.push(createImageBitmap(item.image))
     }
     Promise.all(promises).then(function (bitmaps) {
-      // const decodeTime = performance.now() - newTime
+      const decodeTime = performance.now() - newTime
       function renderFastFrames () {
-        // const beforeDrawTime = performance.now()
+        const beforeDrawTime = performance.now()
         self.offscreenCanvasCtx.clearRect(0, 0, self.offscreenCanvas.width, self.offscreenCanvas.height)
         for (let i = 0; i < bitmaps.length; i++) {
           self.offscreenCanvasCtx.drawImage(
@@ -400,15 +370,15 @@ self.offscreenRender = function (force) {
             images[i].y
           )
         }
-        // const drawTime = performance.now() - beforeDrawTime
-        // console.log(bitmaps.length + ' bitmaps, libass: ' + libassTime + 'ms, decode: ' + decodeTime + 'ms, draw: ' + drawTime + 'ms' )
+        if (self.debug) {
+          const drawTime = performance.now() - beforeDrawTime
+          console.log(bitmaps.length + ' bitmaps, libass: ' + libassTime + 'ms, decode: ' + decodeTime + 'ms, draw: ' + drawTime + 'ms')
+        }
       }
       self.requestAnimationFrame(renderFastFrames)
     })
   }
-  if (!self._isPaused) {
-    self.rafId = self.requestAnimationFrame(self.offscreenRender)
-  }
+  if (!self._isPaused) self.rafId = self.requestAnimationFrame(self.offscreenRender)
 }
 
 self.buildResultImage = function (ptr) {
@@ -429,13 +399,9 @@ self.buildResultImageItem = function (ptr) {
   const w = ptr.w
   const h = ptr.h
   const color = ptr.color
-  if (w === 0 || h === 0) {
-    return null
-  }
+  if (w === 0 || h === 0) return null
   const a = (255 - (color & 255)) / 255
-  if (a === 0) {
-    return null
-  }
+  if (a === 0) return null
   const c = ((color << 8) & 0xff0000) | ((color >> 8) & 0xff00) | ((color >> 24) & 0xff) // black magic
   const buf = new ArrayBuffer(w * h * 4)
   const buf8 = new Uint8ClampedArray(buf)
@@ -446,9 +412,7 @@ self.buildResultImageItem = function (ptr) {
     const offset = bitmap + bitmapPosition
     for (let x = 0, z = w; z--; ++x, resultPosition++) {
       const k = Module.HEAPU8[offset + x]
-      if (k !== 0) {
-        data[resultPosition] = ((a * k) << 24) | c // more black magic
-      }
+      if (k !== 0) data[resultPosition] = ((a * k) << 24) | c // more black magic
     }
   }
   const image = new ImageData(buf8, w, h)
